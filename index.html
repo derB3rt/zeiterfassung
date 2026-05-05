@@ -466,10 +466,10 @@ function renderReportButton() {
   <div class="card" style="text-align:center">
     <div class="card-label" style="margin-bottom:.75rem">Tagesbericht</div>
     <button class="btn btn-primary" id="btn-send-report"
-      ${state.reportSending || state.entries.length === 0 ? 'disabled' : ''}>
+      ${state.reportSending || state.entries.length === 0 || new Date().getHours() < 17 ? 'disabled' : ''}>
       ${state.reportSending ? 'Wird gesendet…' : '✉ Tagesbericht jetzt senden'}
     </button>
-    ${state.entries.length === 0 ? `<p style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Noch keine Einträge heute.</p>` : ''}
+    ${new Date().getHours() < 17 ? `<p style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Verfügbar ab 17:00 Uhr.</p>` : state.entries.length === 0 ? `<p style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Noch keine Einträge heute.</p>` : ''}
     ${statusHtml}
   </div>`
 }
