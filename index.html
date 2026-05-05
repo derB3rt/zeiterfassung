@@ -274,13 +274,18 @@ footer {
 // ─────────────────────────────────────────
 const SUPABASE_URL  = 'https://tyltscnpujsslefthcvk.supabase.co'
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR5bHRzY25wdWpzc2xlZnRoY3ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5OTk1MzQsImV4cCI6MjA5MzU3NTUzNH0.2rcsMMHjqOQ3UV-4YieiikcxpvkRWg-lF7ytAuM5tSo'
-const ADMIN_EMAIL   = 'C.fischer@pqpp2.de'
+
+// Admin-E-Mails – nur diese Nutzer sehen das Admin-Panel
+// Weitere Adressen hier mit Komma ergänzen
+const ADMIN_EMAILS = [
+  'bertram.mischke@googlemail.com',
+]
 
 const EMAILJS_SERVICE  = 'service_pvbg9mt'
 const EMAILJS_TEMPLATE = 'template_p95hcvu'
 const EMAILJS_KEY      = '5kbCLVnhoa30tMLP8'
 
-emailjs.init(EMAILJS_KEY) // ← Kaspars echte E-Mail eintragen
+emailjs.init(EMAILJS_KEY)
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
 
@@ -378,6 +383,10 @@ function totalMinutes() {
   return state.entries.reduce((s, e) => s + (e.duration_minutes || 0), 0)
 }
 
+function isAdmin() {
+  return state.user && ADMIN_EMAILS.includes(state.user.email.toLowerCase())
+}
+
 // ─────────────────────────────────────────
 // RENDER
 // ─────────────────────────────────────────
@@ -444,13 +453,14 @@ function renderApp(root) {
   ${renderTimerCard()}
   ${renderLog()}
   ${renderReportButton()}
+  ${isAdmin() ? renderAdminToggle() : ''}
 
   <footer>Tagesbericht automatisch um 18:00 Uhr</footer>
   `
 
   bindTimerEvents()
   bindLogEvents()
-  bindAdminEvents()
+  if (isAdmin()) bindAdminEvents()
   bindReportEvents()
   document.getElementById('btn-logout').addEventListener('click', doLogout)
 }
@@ -499,9 +509,18 @@ async function sendReport() {
       return
     }
 
-    // Admin-E-Mail aus settings laden (falls vorhanden), sonst Fallback
-    const { data: setting } = await db.from('settings').select('value').eq('key', 'admin_email').single()
-    const adminEmail = setting?.value || ADMIN_EMAIL
+    // Empfänger-E-Mails aus settings laden
+    const { data: setting } = await db.from('settings').select('value').eq('key', 'report_emails').single()
+    let reportEmails = []
+    if (setting) { try { reportEmails = JSON.parse(setting.value) } catch {} }
+    if (!reportEmails.length) {
+      state.reportStatus = { ok: false, msg: 'Keine Empfänger-E-Mail eingetragen. Bitte im Admin-Panel eintragen.' }
+      state.reportSending = false
+      render()
+      return
+    }
+    const adminEmail = reportEmails[0] // Hauptempfänger
+    const ccEmails = reportEmails.slice(1) // weitere im CC
 
     // Nach Nutzer gruppieren und Text aufbauen
     const byUser = {}
@@ -530,13 +549,13 @@ async function sendReport() {
 
     // Mail senden via EmailJS
     await emailjs.send(EMAILJS_SERVICE, EMAILJS_TEMPLATE, {
-      to_email: adminEmail,
+      to_email: reportEmails.join(', '),
       date: todayDE,
       message: body,
       name: 'Zeiterfassung',
     })
 
-    state.reportStatus = { ok: true, msg: `✓ Bericht gesendet an ${adminEmail}` }
+    state.reportStatus = { ok: true, msg: `✓ Bericht gesendet an ${reportEmails.join(', ')}` }
   } catch(err) {
     state.reportStatus = { ok: false, msg: 'Fehler beim Senden. Bitte erneut versuchen.' }
     console.error(err)
@@ -547,30 +566,32 @@ async function sendReport() {
 }
 
 function renderAdminToggle() {
+  const adminList = (state.adminEmails || []).map((email, i) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--mono);font-size:12px">${esc(email)}</span>
+      <button class="icon-btn del remove-admin-email" data-email="${esc(email)}" title="Entfernen">×</button>
+    </div>`).join('')
+
   const panel = state.adminOpen ? `
   <div class="admin-panel">
     <div class="admin-title">⚙ Admin-Einstellungen</div>
+
+    <div style="margin-bottom:1rem">
+      <label>Tagesbericht senden an</label>
+      ${adminList || '<p style="font-family:var(--mono);font-size:11px;color:var(--muted);padding:6px 0">Noch keine E-Mail eingetragen.</p>'}
+    </div>
+
     <div class="admin-row">
       <div class="field">
-        <label>Tagesbericht senden an</label>
         <input type="email" id="admin-email-input" value="${esc(state.adminEmailInput)}"
-          placeholder="kaspar@example.com">
+          placeholder="neue@email.de">
       </div>
       <button class="btn btn-primary btn-sm" id="btn-admin-save" style="margin-bottom:0;flex-shrink:0"
         ${state.adminSaving ? 'disabled' : ''}>
-        ${state.adminSaving ? '…' : 'Speichern'}
+        ${state.adminSaving ? '…' : '+ Hinzufügen'}
       </button>
     </div>
-    ${state.adminStatus ? `<div class="admin-status ${state.adminStatus.ok ? 'ok' : 'err'}">${esc(state.adminStatus.msg)}</div>` : ''}
-    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">
-      <div class="admin-title" style="margin-bottom:.5rem">Edge Function URL</div>
-      <code style="font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all">
-        ${SUPABASE_URL}/functions/v1/daily-report
-      </code>
-      <p style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">
-        Diese URL bei cron-job.org eintragen (täglich 18:00 Uhr, POST).
-      </p>
-    </div>
+    ${state.adminStatus ? `<div class="admin-status ${state.adminStatus.ok ? 'ok' : 'err'}" style="margin-top:8px">${esc(state.adminStatus.msg)}</div>` : ''}
   </div>` : ''
 
   return `
@@ -583,39 +604,59 @@ function renderAdminToggle() {
 function bindAdminEvents() {
   document.getElementById('btn-admin-toggle')?.addEventListener('click', async () => {
     state.adminOpen = !state.adminOpen
-    if (state.adminOpen && !state.adminEmail) await loadAdminEmail()
+    if (state.adminOpen) await loadAdminEmails()
     render()
   })
   document.getElementById('admin-email-input')?.addEventListener('input', e => {
     state.adminEmailInput = e.target.value
   })
-  document.getElementById('btn-admin-save')?.addEventListener('click', saveAdminEmail)
+  document.getElementById('btn-admin-save')?.addEventListener('click', addAdminEmail)
+  document.querySelectorAll('.remove-admin-email').forEach(btn => {
+    btn.addEventListener('click', () => removeAdminEmail(btn.dataset.email))
+  })
 }
 
-async function loadAdminEmail() {
-  const { data } = await db.from('settings').select('value').eq('key', 'admin_email').single()
+async function loadAdminEmails() {
+  const { data } = await db.from('settings').select('value').eq('key', 'report_emails').single()
   if (data) {
-    state.adminEmail = data.value
-    state.adminEmailInput = data.value
+    try { state.adminEmails = JSON.parse(data.value) } catch { state.adminEmails = [] }
+  } else {
+    state.adminEmails = []
   }
 }
 
-async function saveAdminEmail() {
-  const email = state.adminEmailInput.trim()
+async function addAdminEmail() {
+  const email = state.adminEmailInput.trim().toLowerCase()
   if (!email) return
+  if ((state.adminEmails || []).includes(email)) {
+    state.adminStatus = { ok: false, msg: 'Diese E-Mail ist bereits eingetragen.' }
+    render(); return
+  }
   state.adminSaving = true
   state.adminStatus = ''
   render()
 
-  const { error } = await db.from('settings').upsert({ key: 'admin_email', value: email })
+  const newList = [...(state.adminEmails || []), email]
+  const { error } = await db.from('settings').upsert({ key: 'report_emails', value: JSON.stringify(newList) })
   state.adminSaving = false
   if (error) {
     state.adminStatus = { ok: false, msg: 'Fehler beim Speichern.' }
   } else {
-    state.adminEmail = email
-    state.adminStatus = { ok: true, msg: `✓ Gespeichert – Berichte gehen jetzt an ${email}` }
+    state.adminEmails = newList
+    state.adminEmailInput = ''
+    state.adminStatus = { ok: true, msg: `✓ ${email} hinzugefügt` }
   }
   render()
+}
+
+async function removeAdminEmail(email) {
+  const newList = (state.adminEmails || []).filter(e => e !== email)
+  const { error } = await db.from('settings').upsert({ key: 'report_emails', value: JSON.stringify(newList) })
+  if (!error) {
+    state.adminEmails = newList
+    state.adminStatus = { ok: true, msg: `✓ ${email} entfernt` }
+    render()
+  }
 }
 
 function renderTimerCard() {
