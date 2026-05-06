@@ -281,6 +281,9 @@ const ADMIN_EMAILS = [
   'bertram.mischke@googlemail.com',
 ]
 
+// Passwortschutz – SHA256 Hash von "_pqpp2_"
+const PASSWORD_HASH = '350db0d9a0424d16360f3a8cf3a6877ea86a6ca4789ad445273ee7e0bd500497'
+
 const EMAILJS_SERVICE  = 'service_pvbg9mt'
 const EMAILJS_TEMPLATE = 'template_p95hcvu'
 const EMAILJS_KEY      = '5kbCLVnhoa30tMLP8'
@@ -303,6 +306,11 @@ let state = {
   user: null,
   entries: [],
   loading: true,
+
+  // Passwort
+  unlocked: false,
+  passwordInput: '',
+  passwordError: '',
 
   // Setup form
   setupName: '',
@@ -398,12 +406,61 @@ function render() {
     return
   }
 
+  if (!state.unlocked) {
+    renderPassword(root)
+    return
+  }
+
   if (!state.user) {
     renderSetup(root)
     return
   }
 
   renderApp(root)
+}
+
+function renderPassword(root) {
+  root.innerHTML = `
+  <div id="screen-setup">
+    <div class="setup-heading">Zeiterfassung</div>
+    <p class="setup-sub">Bitte Passwort eingeben.</p>
+    <div class="card">
+      <div class="field">
+        <label>Passwort</label>
+        <input type="password" id="pw-input" value="${esc(state.passwordInput)}"
+          placeholder="••••••••" autocomplete="current-password">
+      </div>
+      ${state.passwordError ? `<div class="error">${esc(state.passwordError)}</div>` : ''}
+      <button class="btn btn-primary" id="btn-pw-submit">Weiter →</button>
+    </div>
+  </div>`
+
+  const input = document.getElementById('pw-input')
+  input.addEventListener('input', e => { state.passwordInput = e.target.value })
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') checkPassword() })
+  document.getElementById('btn-pw-submit').addEventListener('click', checkPassword)
+  input.focus()
+}
+
+async function checkPassword() {
+  const input = state.passwordInput.trim()
+  if (!input) return
+
+  const encoder = new TextEncoder()
+  const data = encoder.encode(input)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+
+  if (hashHex === PASSWORD_HASH) {
+    state.unlocked = true
+    sessionStorage.setItem('zt_unlocked', '1')
+    state.passwordError = ''
+    render()
+  } else {
+    state.passwordError = 'Falsches Passwort.'
+    render()
+  }
 }
 
 function renderSetup(root) {
@@ -1035,6 +1092,11 @@ function esc(str) {
 // INIT
 // ─────────────────────────────────────────
 async function init() {
+  // Passwort – bleibt für die Browser-Session gespeichert (bis Tab geschlossen wird)
+  if (sessionStorage.getItem('zt_unlocked') === '1') {
+    state.unlocked = true
+  }
+
   const savedId = localStorage.getItem('zt_user_id')
   if (savedId) {
     const { data } = await db.from('users').select('*').eq('id', savedId).single()
@@ -1045,9 +1107,6 @@ async function init() {
       localStorage.removeItem('zt_user_id')
     }
   }
-  // Admin-E-Mail vorladen
-  const { data: setting } = await db.from('settings').select('value').eq('key', 'admin_email').single()
-  if (setting) { state.adminEmail = setting.value; state.adminEmailInput = setting.value }
   state.loading = false
   render()
 }
